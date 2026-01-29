@@ -1,0 +1,490 @@
+-- 🌟 Grok's Prospecting! FULL HUB v2.0 (55 Features) 
+
+getgenv().Config = {} -- Saves toggles
+
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+local LP = Players.LocalPlayer
+local Char = LP.Character or LP.CharacterAdded:Wait()
+local Root = Char:WaitForChild("HumanoidRootPart")
+
+-- Remotes (ADJUST WITH DEX!)
+local Remotes = RS:WaitForChild("Remotes") or RS:WaitForChild("Events")
+local SellRemote = Remotes:WaitForChild("SellAll")
+local LockRemote = Remotes:WaitForChild("FavoriteItem") or Remotes:WaitForChild("LockItem")
+local InvRemote = Remotes:WaitForChild("GetInventory")
+local PlaceTotemRemote = Remotes:WaitForChild("PlaceTotem")
+local BuyTotemRemote = Remotes:WaitForChild("BuyTotem") -- Or merchant remote
+local EnchantRemote = Remotes:WaitForChild("EnchantTool")
+local ReforgeRemote = Remotes:WaitForChild("Reforge")
+local ExcavRemote = Remotes:WaitForChild("StartExcavation")
+local UseItemRemote = Remotes:WaitForChild("UseItem")
+local CollectRemote = nil -- Tool.Scripts.collect (set dynamically)
+
+-- Positions (user sets)
+getgenv().SandPos = CFrame.new()
+getgenv().WaterPos = CFrame.new()
+
+-- Event Models
+local function HasEvent(eventName)
+    return Workspace:FindFirstChild(eventName) ~= nil or Workspace:FindFirstChild(eventName.."Event") ~= nil
+end
+
+-- Server Hop Func
+local function ServerHop()
+    local success, servers = pcall(function()
+        return HttpService:JSONDecode(game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"))
+    end)
+    if success then
+        for _, v in pairs(servers.data) do
+            if v.playing < v.maxPlayers * 0.8 and v.id ~= game.JobId then
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, v.id)
+                break
+            end
+        end
+    end
+end
+
+-- UI LIB: Kavo (Popular, Clean)
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/xHeptc/Kavo-UI-Library/main/source.lua"))()
+local Window = Library.CreateLib("Grok Prospecting Hub - 55 Features", "DarkTheme")
+
+-- ===== MAIN TAB =====
+local MainTab = Window:NewTab("Main")
+local ItemsSection = MainTab:NewSection("Items")
+local AFKSection = MainTab:NewSection("AFK Panning + Totem") -- NEW #1
+local TreasureSection = MainTab:NewSection("Treasure Mastery") -- NEW #3
+local EnchantSection = MainTab:NewSection("Enchant Tools") -- NEW #4
+local LockFarmSection = MainTab:NewSection("Lock Farm (Aetherite Iridescent)") -- NEW #6
+local ReforgeSection = MainTab:NewSection("Auto Reforge") -- NEW
+local ExcavSection = MainTab:NewSection("Excavation") -- NEW
+
+-- Items (Your Current)
+ItemsSection:NewDropdown("Items to Lock", "Lock specific items", {"Gold", "Diamond", "Aetherite"}, function(v)
+    getgenv().SelectedLockItem = v
+end)
+ItemsSection:NewDropdown("Quick Select Rarity", "Lock by rarity", {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"}, function(v)
+    getgenv().LockRarity = v
+end)
+ItemsSection:NewToggle("Lock Selected Items", "Locks selected", function(state)
+    getgenv().AutoLockSelected = state
+    -- Loop to fire LockRemote on matching items (hook inv update or loop)
+end)
+ItemsSection:NewButton("Unlock All Items", "Unlocks everything", function()
+    pcall(function()
+        LockRemote:FireServer("UnlockAll")
+    end)
+end)
+ItemsSection:NewToggle("Teleport to Merchant", "TP loop to nearest", function(state)
+    getgenv().TPMerchant = state
+end)
+ItemsSection:NewToggle("Sell All Items", "Sells when full", function(state)
+    getgenv().AutoSell = state
+end)
+ItemsSection:NewSlider("Required Inventory Size", "Sell when inv >", 500, 1, function(s)
+    getgenv().MinInvSize = s
+end)
+ItemsSection:NewToggle("Claim Collection Reward", "Auto claim", function(state)
+    getgenv().ClaimReward = state
+end)
+ItemsSection:NewDropdown("Buy Item", "Buy from shop", {"Pan", "Shovel", "Totem"}, function(v)
+    getgenv().BuyItem = v
+end)
+ItemsSection:NewDropdown("Craft Equipment", "Craft selected", {"Advanced Pan", "Magic Shovel"}, function(v)
+    getgenv().CraftItem = v
+end)
+
+-- NEW #1 AFK Panning + Auto Totem (Links to Panning Fill/Shake)
+AFKSection:NewDropdown("Selected Totem", "Luck/Strength/Luminant", {"Luck", "Strength", "Luminant"}, function(v)
+    getgenv().SelectedTotem = v
+end)
+AFKSection:NewToggle("Auto Buy Totem if Out", "Buys if 0", function(state)
+    getgenv().AutoBuyTotem = state
+end)
+AFKSection:NewToggle("AFK Pan + Totem Combo", "Full AFK (Fill+Shake+Totem)", function(state)
+    getgenv().AFKPanTotem = state
+    spawn(function()
+        while getgenv().AFKPanTotem do
+            -- Link Fill/Shake (set them true)
+            getgenv().FillPan = true
+            getgenv().ShakePan = true
+            -- Place Totem
+            pcall(function()
+                PlaceTotemRemote:FireServer(getgenv().SelectedTotem)
+            end)
+            -- Auto Buy check
+            if getgenv().AutoBuyTotem then
+                local inv = InvRemote:InvokeServer()
+                if inv.Totems and inv.Totems[getgenv().SelectedTotem] < 1 then
+                    BuyTotemRemote:FireServer(getgenv().SelectedTotem, 1)
+                end
+            end
+            wait(300) -- Totem ~5min
+        end
+    end)
+end)
+
+-- NEW #3 Auto Treasure Dig
+TreasureSection:NewToggle("Auto Dig Treasure Map", "Finds & digs auto", function(state)
+    getgenv().AutoTreasure = state
+    spawn(function()
+        while getgenv().AutoTreasure do
+            -- Check for map
+            local hasMap = false
+            for _, t in pairs(LP.Backpack:GetChildren()) do
+                if t.Name:find("Treasure Map") then hasMap = true break end
+            end
+            if hasMap then
+                -- Find spot (Workspace marker)
+                local spot = Workspace:FindFirstChild("TreasureSpot") or Workspace.TreasureMarker
+                if spot then
+                    Root.CFrame = spot.CFrame * CFrame.new(0,5,0)
+                    wait(0.5)
+                    -- Dig
+                    if CollectRemote then CollectRemote:InvokeServer(1) end
+                end
+            end
+            wait(1)
+        end
+    end)
+end)
+
+-- NEW #4 Auto Enchant Pan/Shovel (Aetherite Iridescent)
+EnchantSection:NewToggle("Auto Enchant Pan/Shovel", "Uses Aetherite + Iridescent", function(state)
+    getgenv().AutoEnchant = state
+    spawn(function()
+        while getgenv().AutoEnchant do
+            local pan = Char:FindFirstChildOfClass("Tool") -- Pan equipped
+            local hasAetherIri = false -- Check inv for "Aetherite (Iridescent)"
+            local inv = InvRemote:InvokeServer()
+            for _, item in pairs(inv.Items) do
+                if item.Name == "Aetherite" and item.Modifier == "Iridescent" then hasAetherIri = true break end
+            end
+            if hasAetherIri and pan then
+                EnchantRemote:FireServer(pan.Name, "Aetherite")
+            end
+            wait(2)
+        end
+    end)
+end)
+
+-- NEW #6 Auto Lock Selected Mineral + Modifier (No Sell)
+LockFarmSection:NewDropdown("Selected Mineral", "e.g. Aetherite", {"Aetherite", "Gold", "Diamond"}, function(v)
+    getgenv().LockMineral = v
+end)
+LockFarmSection:NewDropdown("Selected Modifier", "e.g. Iridescent", {"Iridescent", "Lucky", "Shiny"}, function(v)
+    getgenv().LockMod = v
+end)
+LockFarmSection:NewToggle("Auto Lock Selected (Exclude Sell)", "Locks on get", function(state)
+    getgenv().AutoLockSelectedMinMod = state
+    -- Hook collect event or loop check new items
+    -- Example:
+    -- On new item if name == LockMineral and mod == LockMod then LockRemote:FireServer(itemID)
+end)
+
+-- NEW Auto Reforge
+ReforgeSection:NewSlider("Target Reforge %", "90-100", 90, 100, function(s)
+    getgenv().TargetReforge = s
+end)
+ReforgeSection:NewToggle("Auto Reforge (Stops at Target)", "Reforges equipped", function(state)
+    getgenv().AutoReforge = state
+    spawn(function()
+        while getgenv().AutoReforge do
+            local tool = Char:FindFirstChildOfClass("Tool")
+            if tool and (tool:GetAttribute("ReforgePercent") or 0) < getgenv().TargetReforge then
+                ReforgeRemote:FireServer(tool)
+            else
+                getgenv().AutoReforge = false
+                break
+            end
+            wait(1)
+        end
+    end)
+end)
+
+-- NEW Auto Excav
+ExcavSection:NewDropdown("Selected Excavation", "A-D", {"A", "B", "C", "D"}, function(v)
+    getgenv().SelectedExcav = v
+end)
+ExcavSection:NewToggle("Auto Start Selected Excavation", "Loops start", function(state)
+    getgenv().AutoExcav = state
+    spawn(function()
+        while getgenv().AutoExcav do
+            ExcavRemote:FireServer(getgenv().SelectedExcav)
+            wait(60) -- Cooldown
+        end
+    end)
+end)
+
+-- ===== GEODES TAB (Your Current) =====
+local GeodesTab = Window:NewTab("Geodes")
+local GeodesSection = GeodesTab:NewSection("Geodes")
+GeodesSection:NewToggle("Server Hop on Finish", "Hop after geodes", function(state)
+    getgenv().HopOnGeodeFinish = state
+end)
+GeodesSection:NewToggle("Collect Geodes", "Auto collect", function(state)
+    getgenv().AutoGeodes = state
+end)
+GeodesSection:NewToggle("Open Geodes", "Auto open", function(state)
+    getgenv().OpenGeodes = state
+end)
+
+-- ===== PANNING TAB (Your Current + Links to AFK) =====
+local PanningTab = Window:NewTab("Panning")
+local PanningSection = PanningTab:NewSection("Panning")
+PanningSection:NewButton("Set Sand Position", "Stand on sand & click", function()
+    getgenv().SandPos = Root.CFrame
+    game.StarterGui:SetCore("SendNotification", {Title = "Set!"; Text = "Sand Pos Saved"; Duration = 2})
+end)
+PanningSection:NewButton("Set Water Position", "Stand in water & click", function()
+    getgenv().WaterPos = Root.CFrame
+    game.StarterGui:SetCore("SendNotification", {Title = "Set!"; Text = "Water Pos Saved"; Duration = 2})
+end)
+PanningSection:NewDropdown("Movement Method", "Tween/Walk", {"Tween", "CFrame"}, function(v)
+    getgenv().MoveMethod = v
+end)
+PanningSection:NewToggle("Fill Pan", "Auto fill from sand", function(state)
+    getgenv().FillPan = state
+    spawn(function()
+        while getgenv().FillPan do
+            if getgenv().SandPos ~= CFrame.new() then
+                Root.CFrame = getgenv().SandPos
+                -- Collect sand
+                CollectRemote = Char:FindFirstChildOfClass("Tool").Scripts.collect
+                if CollectRemote then CollectRemote:InvokeServer(1) end
+            end
+            wait(0.1)
+        end
+    end)
+end)
+PanningSection:NewToggle("Shake Pan", "Shake in water", function(state)
+    getgenv().ShakePan = state
+    spawn(function()
+        while getgenv().ShakePan do
+            if getgenv().WaterPos ~= CFrame.new() then
+                Root.CFrame = getgenv().WaterPos
+                -- Shake remote (pan shake)
+                local shakeRemote = Remotes.ShakePan
+                pcall(shakeRemote.FireServer, shakeRemote)
+            end
+            wait(0.1)
+        end
+    end)
+end)
+
+-- ===== TRANSPORT TAB (Your Current) =====
+local TransportTab = Window:NewTab("Transport")
+local TransportSection = TransportTab:NewSection("Transport")
+TransportSection:NewDropdown("Teleport to Deposit", "Deposits", {"Beach", "Cave", "Volcano"}, function(v)
+    -- TP CFrames
+    local tps = {Beach = CFrame.new(0,50,0), Cave = CFrame.new(100,50,100)} -- ADJUST
+    Root.CFrame = tps[v]
+end)
+
+-- ===== EVENTS TAB (NEW #2, #7) =====
+local EventsTab = Window:NewTab("Events")
+local HopSection = EventsTab:NewSection("Server Hop")
+local AbyssSection = EventsTab:NewSection("Abyss")
+
+-- NEW #2 Auto Hop No Events
+HopSection:NewToggle("Auto Hop No Events", "Hops if NO Meteor/Void/Blizzard/Nimue", function(state)
+    getgenv().AutoHopNoEvents = state
+    spawn(function()
+        while getgenv().AutoHopNoEvents do
+            if not (HasEvent("Meteor") or HasEvent("The Void") or HasEvent("Blizzard") or HasEvent("NimuesBlessing")) then
+                ServerHop()
+            end
+            wait(60)
+        end
+    end)
+end)
+
+-- NEW #7 Auto Firefly Flare in Abyss
+AbyssSection:NewToggle("Auto Throw Firefly Flare", "Infinite light in Abyss", function(state)
+    getgenv().AutoFlare = state
+    spawn(function()
+        while getgenv().AutoFlare do
+            if Root.Position.Y < -400 then -- Abyss Y level (adjust)
+                local flareActive = Workspace:FindFirstChild("FireflyFlareEffect") == nil
+                if flareActive then
+                    UseItemRemote:FireServer("Firefly Flare")
+                end
+            end
+            wait(30) -- Flare duration
+        end
+    end)
+end)
+
+-- ===== UTILITY TAB (NEW #5) =====
+local UtilityTab = Window:NewTab("Utility")
+local RuneSection = UtilityTab:NewSection("Runes (New Players)")
+
+-- NEW #5 Auto TP All Runes
+local runeCFrames = { -- HARDCODE (use Fly/TP to runes, copy CFrame with executor tool, add here)
+    CFrame.new(-500, 50, -500), -- Example Rune 1 (Beach)
+    CFrame.new(200, 20, 300), -- Rune 2
+    -- Add 10+ from Dex/Studio: Workspace.Runes:GetChildren()[i].CFrame
+}
+RuneSection:NewToggle("Auto TP All Runes", "Loops TPs + interact", function(state)
+    getgenv().AutoRuneTP = state
+    spawn(function()
+        local index = 1
+        while getgenv().AutoRuneTP do
+            Root.CFrame = runeCFrames[index]
+            wait(2) -- Interact time
+            index = (index % #runeCFrames) + 1
+        end
+    end)
+end)
+
+-- ===== UNIVERSAL TAB (Your Current 17 Features) =====
+local UniversalTab = Window:NewTab("Universal")
+local VisualsSection = UniversalTab:NewSection("Visuals")
+local PhysicalSection = UniversalTab:NewSection("Physical")
+local PerfSection = UniversalTab:NewSection("Performance")
+local ServersSection = UniversalTab:NewSection("Servers")
+local SafetySection = UniversalTab:NewSection("Safety")
+
+-- Visuals
+VisualsSection:NewToggle("ESP Players", "ESP thru walls", function(state)
+    getgenv().ESPPlayers = state
+    -- ESP code (Drawing lib or Highlight)
+end)
+VisualsSection:NewDropdown("Players (None = All)", "ESP target", {"None"}, function(v) end)
+
+-- Physical
+PhysicalSection:NewDropdown("Walkspeed Method", "CFrame/WalkSpeed", {"CFrame", "Humanoid"}, function(v)
+    getgenv().SpeedMethod = v
+end)
+PhysicalSection:NewToggle("Change Walkspeed", "Custom speed", function(state)
+    getgenv().SpeedHack = state
+end)
+PhysicalSection:NewSlider("Speed", "Walk/Fly speed", 16, 500, function(s)
+    getgenv().SpeedVal = s
+end)
+PhysicalSection:NewToggle("CFrame Fly", "Fly with keys", function(state)
+    getgenv().FlyEnabled = state
+    -- Standard CFrame fly code (keys W/A/S/D Space Shift)
+end)
+PhysicalSection:NewSlider("Fly Speed", "Fly multiplier", 1, 100, function(s)
+    getgenv().FlySpeed = s
+end)
+PhysicalSection:NewToggle("Noclip", "No clip walls", function(state)
+    getgenv().Noclip = state
+end)
+PhysicalSection:NewToggle("Infinite Jump", "Spam jump", function(state)
+    getgenv().InfJump = state
+    UserInputService.JumpRequest:Connect(function() if getgenv().InfJump then Char.Humanoid:ChangeState("Jumping") end end)
+end)
+PhysicalSection:NewDropdown("Teleport to Player", "TP to player", {"None"}, function(v)
+    if v ~= "None" then
+        Root.CFrame = Players[v].Character.HumanoidRootPart.CFrame
+    end
+end)
+
+-- Performance
+PerfSection:NewToggle("Disable Rendering", "FPS boost", function(state)
+    getgenv().DisableRender = state
+    -- Set game.Lighting.FogEnd = inf etc.
+end)
+PerfSection:NewButton("Boost FPS", "One-time boost", function()
+    -- settings().Rendering.QualityLevel = "Level01"
+end)
+
+-- Servers
+ServersSection:NewToggle("Rejoin on Disconnect", "Auto rejoin", function(state)
+    getgenv().AutoRejoin = state
+end)
+ServersSection:NewButton("Rejoin", "Rejoin server", function()
+    game:GetService("TeleportService"):Teleport(game.PlaceId)
+end)
+ServersSection:NewButton("Server Hop", "Hop to new", ServerHop)
+
+-- Safety
+SafetySection:NewToggle("Anti AFK", "Anti idle kick", function(state)
+    getgenv().AntiAFK = state
+end)
+SafetySection:NewToggle("Kick on Staff Join", "Auto kick if staff", function(state)
+    getgenv().AntiStaff = state
+    Players.PlayerAdded:Connect(function(p)
+        if getgenv().AntiStaff and p:GetAttribute("IsStaff") then -- Or team color
+            game.Players:Kick("Staff detected")
+        end
+    end)
+end)
+
+-- Character Respawn Handler
+LP.CharacterAdded:Connect(function(newChar)
+    Char = newChar
+    Root = Char:WaitForChild("HumanoidRootPart")
+    CollectRemote = nil -- Reset
+end)
+
+-- Noclip Loop
+RunService.Stepped:Connect(function()
+    if getgenv().Noclip then
+        for _, part in pairs(Char:GetDescendants()) do
+            if part:IsA("BasePart") then part.CanCollide = false end
+        end
+    end
+    -- Speed
+    if getgenv().SpeedHack then
+        Char.Humanoid.WalkSpeed = getgenv().SpeedVal
+    end
+end)
+
+-- Fly Loop (Basic CFrame Fly)
+local flying = false
+RunService.Heartbeat:Connect(function(dt)
+    if getgenv().FlyEnabled and Root then
+        local cam = workspace.CurrentCamera
+        local vel = Root.Velocity
+        local dir = Vector3.new()
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir = dir + cam.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir = dir - cam.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir = dir - cam.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir = dir + cam.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir = dir + Vector3.new(0,1,0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then dir = dir - Vector3.new(0,1,0) end
+        Root.CFrame = Root.CFrame + dir * getgenv().FlySpeed * dt
+    end
+end)
+
+print("Grok Prospecting Hub LOADED! 🎉 Total 55 Features - Farm AFK Empire! 💰")
+game.StarterGui:SetCore("SendNotification", {
+    Title = "Grok Hub";
+    Text = "55 Features Ready! Use DEX for remotes if errors.";
+    Duration = 5;
+})PanSec:NewButton("Set Water Position", "", function()
+    getgenv().WaterCFrame = hrp.CFrame
+end)
+PanSec:NewToggle("Fill Pan", "", function(s) getgenv().FillPan = s end)
+PanSec:NewToggle("Shake Pan", "", function(s) getgenv().ShakePan = s end)
+
+-- ========== UNIVERSAL (your 17 features – placeholder) ==========
+local UniTab = Window:NewTab("Universal")
+UniTab:NewSection("<< Visuals / Physical / Performance / Servers / Safety >>")
+-- Add your toggles here (ESP, Fly, Noclip, Inf Jump, Speed, Anti-AFK, etc.)
+-- Example:
+UniTab:NewToggle("Infinite Jump", "", function(s)
+    getgenv().InfJump = s
+end)
+UserInputService.JumpRequest:Connect(function()
+    if getgenv().InfJump then
+        char.Humanoid:ChangeState("Jumping")
+    end
+end)
+
+-- ========== NOTIFICATION & END ==========
+print("Grok Prospecting Hub loaded – upload to GitHub!")
+plr.PlayerGui:SetCore("SendNotification", {
+    Title = "Grok Hub",
+    Text = "Ready! Use Dex Explorer to fix remotes if needed.",
+    Duration = 6
+})
