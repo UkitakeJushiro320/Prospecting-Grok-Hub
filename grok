@@ -1,5 +1,3 @@
--- 🌟 Grok's Prospecting! FULL HUB v2.0 (55 Features) 
-
 getgenv().Config = {} -- Saves toggles
 
 local Players = game:GetService("Players")
